@@ -619,6 +619,149 @@ describe("amoClient.Client", function() {
   });
 
 
+  describe("submitting", function() {
+
+    beforeEach(function() {
+      setUp.call(this);
+
+      this.submit = (conf) => {
+        conf = {
+          guid: "some-guid",
+          version: "some-version",
+          xpiPath: "some-xpi-path",
+          ...conf,
+        };
+        return this.client.submit(conf);
+      };
+
+    });
+
+    it("lets you submit an add-on", function() {
+      var apiStatusUrl = "https://api/addon/version/upload/abc123";
+      var conf = {
+        guid: "a-guid",
+        version: "a-version",
+      };
+      this.client._request = new MockRequest({
+        httpResponse: {statusCode: 202},
+        // Partial response like:
+        // http://olympia.readthedocs.org/en/latest/topics/api/submiting.html#checking-the-status-of-your-upload
+        responseBody: {
+          url: apiStatusUrl,
+        },
+      });
+
+      return this.submit(conf).then(() => {
+        var putCall = this.client._request.calls[0];
+        expect(putCall.name).to.be.equal("put");
+
+        var partialUrl = "/addons/" + conf.guid + "/versions/" + conf.version;
+        expect(putCall.conf.url).to.include(partialUrl);
+        expect(putCall.conf.formData.upload).to.be.equal("fake-read-stream");
+        // When doing a PUT, the version is in the URL not the form data.
+        expect(putCall.conf.formData.version).to.be.undefined;
+        // When no channel is supplied, the API is expected to use the most recent channel.
+        expect(putCall.conf.formData.channel).to.be.undefined;
+      });
+    });
+
+    it("lets you submit an add-on without an ID", function() {
+      const apiStatusUrl = "https://api/addon/version/upload/abc123";
+      const conf = {
+        guid: null,
+        version: "a-version",
+      };
+
+      this.client._request = new MockRequest({
+        httpResponse: {statusCode: 202},
+        // Partial response like:
+        // http://olympia.readthedocs.org/en/latest/topics/api/submiting.html#checking-the-status-of-your-upload
+        responseBody: {
+          url: apiStatusUrl,
+        },
+      });
+
+      return this.submit(conf).then(() => {
+        var call = this.client._request.calls[0];
+        expect(call.name).to.be.equal("post");
+
+        // Make sure the endpoint ends with /addons/
+        expect(call.conf.url).to.match(/\/addons\/$/);
+        expect(call.conf.formData.upload).to.be.equal("fake-read-stream");
+        expect(call.conf.formData.version).to.be.equal(conf.version);
+        // Channel is not a valid parameter for new add-ons.
+        expect(call.conf.formData.channel).to.be.undefined;
+      });
+    });
+
+    it("lets you submit an add-on on a specific channel", function() {
+      var conf = {
+        channel: "listed",
+      };
+
+      this.client._request = new MockRequest({
+        httpResponse: {statusCode: 202},
+      });
+
+      return this.submit(conf).then(() => {
+        expect(this.client._request.calls[0].conf.formData.channel)
+          .to.be.equal("listed");
+      });
+    });
+
+    it("lets you submit an add-on without an ID ignoring channel", function() {
+      var conf = {
+        guid: null,
+        channel: "listed",
+      };
+
+      this.client._request = new MockRequest({
+        httpResponse: {statusCode: 202},
+      });
+
+      return this.submit(conf).then(() => {
+        expect(this.client._request.calls[0].conf.formData.channel)
+          .to.be.undefined;
+      });
+    });
+
+    it("handles already validated add-ons", function() {
+
+      this.client._request = new MockRequest({
+        httpResponse: {statusCode: 409},
+        responseBody: {error: "version already exists"},
+      });
+
+      return this.submit().then(function(result) {
+        expect(result.error).to.be.equal("version already exists");
+      });
+    });
+
+    it("handles incorrect status code for error responses", function() {
+      this.client._request = new MockRequest({
+        // For some reason, the API was returning errors with a 200.
+        // See https://github.com/mozilla/addons-server/issues/3097
+        httpResponse: {statusCode: 200},
+        responseBody: {error: "some server error"},
+      });
+
+      return this.submit().then((result) => {
+        expect(result.error).to.be.equal("some server error");
+      });
+    });
+
+    it("throws an error when submiting on a 500 server response", function() {
+      this.client._request = new MockRequest({httpResponse: {statusCode: 500}});
+
+      return this.submit().then(function() {
+        throw new Error("unexpected success");
+      }).catch(function(err) {
+        expect(err.message).to.include("Received bad response");
+      });
+    });
+
+  });
+
   describe("debugging", function() {
     var fakeLog;
 

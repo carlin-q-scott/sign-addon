@@ -83,7 +83,28 @@ export class Client {
    *   - downloadedFiles: Array of file objects
    *   - id: string identifier for the signed add-on
    */
-  sign({guid, version, channel, xpiPath}) {
+  async sign({guid, version, channel, xpiPath}) {
+
+    const response = await this.submit({ guid, version, channel, xpiPath });
+
+    if (response.error) {
+      return {success: false};
+    }
+    return this.waitForSignedAddon(response.url);
+  }
+
+  /**
+   * Sign a new version of your add-on at addons.mozilla.org.
+   *
+   * @param {Object} conf
+   *   - `xpiPath` Path to xpi file.
+   *   - `guid` Optional add-on GUID, aka the ID in install.rdf.
+   *   - `version` add-on version string.
+   *   - `channel` release channel (listed, unlisted).
+   *
+   * @return {Promise}
+   */
+  async submit({guid, version, channel, xpiPath}) {
 
     const formData = {
       upload: this._fs.createReadStream(xpiPath),
@@ -99,7 +120,7 @@ export class Client {
       }
     } else {
       // POST to a generic URL to create a new add-on.
-      this.debug("Signing add-on without an ID");
+      this.debug("Submitting add-on without an ID");
       method = "post";
       formData.version = version;
       if (channel) {
@@ -112,34 +133,29 @@ export class Client {
 
     const doRequest = this[method].bind(this);
 
-    return doRequest({
-      url: addonUrl, formData,
-    }, {
-      throwOnBadResponse: false,
-    }).then((responseResult) => {
-      const httpResponse = responseResult[0] || {};
-      const response = responseResult[1] || {};
+    const responseResult = await doRequest({ url: addonUrl, formData },
+                                           { throwOnBadResponse: false });
+    const httpResponse = responseResult[0] || {};
+    const response = responseResult[1] || {};
 
-      const acceptableStatuses = [200, 201, 202];
-      const receivedError = !!response.error;
-      if (acceptableStatuses.indexOf(httpResponse.statusCode) === -1
-          || receivedError) {
-        if (response.error) {
-          this.logger.error(`Server response: ${response.error}`,
-                            `(status: ${httpResponse.statusCode})`);
-          return {success: false};
-        }
-
-        throw new Error(
-          "Received bad response from the server while requesting " +
-          this.absoluteURL(addonUrl) +
-          "\n\n" + "status: " + httpResponse.statusCode + "\n" +
-          "response: " + formatResponse(response) + "\n" + "headers: " +
-          JSON.stringify(httpResponse.headers || {}) + "\n");
+    const acceptableStatuses = [200, 201, 202];
+    const receivedError = !!response.error;
+    if (acceptableStatuses.indexOf(httpResponse.statusCode) === -1
+        || receivedError) {
+      if (response.error) {
+        this.logger.error(`Server response: ${response.error}`,
+                          `(status: ${httpResponse.statusCode})`);
+        return response;
       }
 
-      return this.waitForSignedAddon(response.url);
-    });
+      throw new Error(
+        "Received bad response from the server while requesting " +
+        this.absoluteURL(addonUrl) +
+        "\n\n" + "status: " + httpResponse.statusCode + "\n" +
+        "response: " + formatResponse(response) + "\n" + "headers: " +
+        JSON.stringify(httpResponse.headers || {}) + "\n");
+    }
+    return response;
   }
 
   /**
